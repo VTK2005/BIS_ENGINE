@@ -1,0 +1,8 @@
+{
+    "crons": [
+        {
+            "path": "/api/scrape/bis",
+            "schedule": "0 */6 * * *"
+        }
+    ]
+}
