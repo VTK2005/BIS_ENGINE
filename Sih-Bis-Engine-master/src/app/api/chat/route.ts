@@ -31,6 +31,11 @@ export async function POST(req: NextRequest) {
         const search_query = body.search_query.trim();
         const conversationId = body.conversationId.trim();
 
+        // "vector" uses Qdrant + BGE-M3 embeddings (default)
+        // "vectorless" uses MongoDB PageIndex pipeline (no embeddings)
+        const mode: "vector" | "vectorless" =
+            body.mode === "vectorless" ? "vectorless" : "vector";
+
         if (!process.env.BIS_RAG_URI) {
             console.error("BIS_RAG_URI is not defined");
 
@@ -38,6 +43,12 @@ export async function POST(req: NextRequest) {
                 message: "Internal Server error"
             }, { status: 500 });
         }
+
+        // Derive correct endpoint from mode
+        const ragBaseUri = process.env.BIS_RAG_URI.replace(/\/ask(-vectorless)?$/, "");
+        const ragUri = mode === "vectorless"
+            ? `${ragBaseUri}/ask-vectorless`
+            : `${ragBaseUri}/ask`;
 
         await connectDB();
 
@@ -65,14 +76,13 @@ export async function POST(req: NextRequest) {
             intent: context.intent,
         };
 
-        const ragReq = await fetch(process.env.BIS_RAG_URI, {
+        const ragReq = await fetch(ragUri, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(ragData),
         });
-
 
         if (!ragReq.ok) {
             const errorText = await ragReq.text().catch(() => "");
@@ -104,6 +114,7 @@ export async function POST(req: NextRequest) {
             conversationId,
             answer,
             sources: ragResponse.sources ?? [],
+            mode,
         }, { status: 200 });
 
     } catch (error) {

@@ -3,7 +3,7 @@
 import UserQuery from "@/components/msgComponent/UserQuery";
 import BISResponse from "@/components/msgComponent/BISResponse";
 import EmptyChat from "@/components/msgComponent/EmptyChat";
-import { Home, MessageCircle, FileText, BadgeCheck, FlaskConical, Bell, Lightbulb, ArrowRight, BookOpen, Search, Sparkles, Plus, Info } from "lucide-react";
+import { Home, MessageCircle, FileText, BadgeCheck, FlaskConical, Bell, Lightbulb, ArrowRight, BookOpen, Search, Sparkles, Plus, Info, Database, Zap } from "lucide-react";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
@@ -26,13 +26,17 @@ export type ChatResponse = {
     answer: string;
     sources: Source[];
     conversationId?: string;
+    mode?: "vector" | "vectorless";
 };
 
 export type StoredResponse = ChatResponse & {
     id: string;
     createdAt: string;
     status: "loading" | "complete";
+    mode: "vector" | "vectorless";
 };
+
+type RagMode = "vector" | "vectorless";
 
 const Page = () => {
     const { register, handleSubmit, reset, setValue } = useForm<Inputs>();
@@ -42,6 +46,7 @@ const Page = () => {
     const [loading, setLoading] = useState(false);
     const [conversationId, setConversationId] = useState<string | null>(null);
     const [conversationLoading, setConversationLoading] = useState(true);
+    const [ragMode, setRagMode] = useState<RagMode>("vector");
     const searchParams = useSearchParams();
     const initialQuery = searchParams.get("query");
 
@@ -158,6 +163,7 @@ const Page = () => {
             answer: "",
             sources: [],
             status: "loading",
+            mode: ragMode,
         }
         ]);
 
@@ -180,6 +186,7 @@ const Page = () => {
                 body: JSON.stringify({
                     conversationId,
                     search_query: userQuery,
+                    mode: ragMode,
                 }),
             });
 
@@ -333,7 +340,7 @@ const Page = () => {
 
                 {/* CENTER CHAT */}
                 <section className="relative min-w-0 flex-1 bg-white">
-                    <div className="h-full overflow-y-auto pb-18">
+                    <div className="h-full overflow-y-auto pb-28">
                         <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-5 py-8">
                             {conversationLoading ? (
                                 <div className="flex min-h-125 items-center justify-center">
@@ -376,6 +383,19 @@ const Page = () => {
                                                         Source-backed
                                                     </span>
 
+                                                    {/* Mode badge on response */}
+                                                    <span className="h-4 w-px bg-[#d8e0e8]" />
+                                                    <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                                        response.mode === "vectorless"
+                                                            ? "bg-[#fff3cd] text-[#7a5500]"
+                                                            : "bg-[#e8f4ff] text-[#0f4c81]"
+                                                    }`}>
+                                                        {response.mode === "vectorless"
+                                                            ? <><Database size={10} className="mr-0.5" />Vectorless</>
+                                                            : <><Zap size={10} className="mr-0.5" />Vector</>
+                                                        }
+                                                    </span>
+
                                                 </div>
 
                                                 <div className="w-full">
@@ -392,7 +412,51 @@ const Page = () => {
                     </div>
                     {/* CHAT INPUT */}
 
-                    <div className="absolute bottom-0 left-0 right-0 z-30 border-t border-[#17395f]/8 bg-white/95 px-4 py-3 backdrop-blur">
+                    <div className="absolute bottom-0 left-0 right-0 z-30 border-t border-[#17395f]/8 bg-white/95 px-4 pt-2 pb-3 backdrop-blur">
+
+                        {/* RAG MODE TOGGLE */}
+                        <div className="mx-auto mb-2 flex max-w-5xl items-center justify-between">
+                            <span className="text-[11px] font-medium text-[#8295a8]">Search mode</span>
+                            <div className="flex items-center gap-1 rounded-full border border-[#17395f]/12 bg-[#f4f8fc] p-0.5">
+                                <button
+                                    type="button"
+                                    id="mode-vector"
+                                    onClick={() => setRagMode("vector")}
+                                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 ${
+                                        ragMode === "vector"
+                                            ? "bg-[#0f4c81] text-white shadow-sm"
+                                            : "text-[#465f78] hover:text-[#17395f]"
+                                    }`}
+                                >
+                                    <Zap size={11} strokeWidth={2.5} />
+                                    Vector RAG
+                                </button>
+                                <button
+                                    type="button"
+                                    id="mode-vectorless"
+                                    onClick={() => setRagMode("vectorless")}
+                                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 ${
+                                        ragMode === "vectorless"
+                                            ? "bg-[#0f4c81] text-white shadow-sm"
+                                            : "text-[#465f78] hover:text-[#17395f]"
+                                    }`}
+                                >
+                                    <Database size={11} strokeWidth={2.5} />
+                                    Vectorless RAG
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Mode description hint */}
+                        <div className="mx-auto mb-2 max-w-5xl">
+                            <p className="text-[10px] text-[#9aabb9]">
+                                {ragMode === "vector"
+                                    ? "⚡ Vector RAG — semantic search using BGE-M3 embeddings in Qdrant"
+                                    : "🗄️ Vectorless RAG — LLM-guided hierarchical search through MongoDB PageIndex"
+                                }
+                            </p>
+                        </div>
+
                         <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-xl border border-[#17395f]/15 bg-white p-2 shadow-[0_5px_25px_rgba(23,57,95,0.08)]">
                             <Search size={22} className="ml-1 shrink-0 text-[#69839c]" />
 
@@ -418,6 +482,7 @@ const Page = () => {
 
                             </form>
                         </div>
+
                     </div>
 
                 </section>
