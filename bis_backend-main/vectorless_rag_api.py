@@ -94,6 +94,7 @@ def _llm_call_vl(
     tools: Optional[list] = None,
     temperature: float = 0.0,
     model: Optional[str] = None,
+    tool_choice: Optional[str] = None,
 ) -> Any:
     """
     Wrapper around _groq_client.chat.completions.create with retry + exponential backoff.
@@ -107,7 +108,7 @@ def _llm_call_vl(
     }
     if tools:
         kwargs["tools"] = tools
-        kwargs["tool_choice"] = "auto"
+        kwargs["tool_choice"] = tool_choice if tool_choice else "auto"
 
     last_exc: Optional[Exception] = None
     for attempt in range(1, LLM_MAX_RETRIES + 1):
@@ -417,8 +418,10 @@ def run_agentic_vectorless_rag(question: str) -> Dict[str, Any]:
         try:
             final_response = _llm_call_vl(
                 messages=messages,
+                tools=[SEARCH_TOOL_VL],
                 temperature=0.1,
                 model=GROQ_AGENT_MODEL_VL,
+                tool_choice="none",
             )
             answer = (final_response.choices[0].message.content or "").strip()
         except Exception as exc:
@@ -502,12 +505,20 @@ def _run_pipeline(question: str):
     # Stage 1
     selected_categories = retrieve_categories(question)
     if not selected_categories:
-        return ("No relevant BIS category found for this query.", [])
+        logger.info("Pipeline Stage 1 failed — trying metadata fallback")
+        fallback_result, fallback_contents = _metadata_fallback_answer(question)
+        if fallback_contents:
+            return fallback_result, fallback_contents
+        return ("No relevant BIS category found for this query. The topic may not be indexed in the current document set.", [])
 
     # Stage 2
     selected_products = retrieve_products(question, selected_categories)
     if not selected_products:
-        return ("No relevant BIS product found for this query.", [])
+        logger.info("Pipeline Stage 2 failed — trying metadata fallback")
+        fallback_result, fallback_contents = _metadata_fallback_answer(question)
+        if fallback_contents:
+            return fallback_result, fallback_contents
+        return ("No relevant BIS product found for this query in the selected category.", [])
 
     # Stage 3
     selected_documents = retrieve_documents(selected_products)
@@ -521,6 +532,10 @@ def _run_pipeline(question: str):
 
     # Stage 5
     selected_nodes = retrieve_pageindex_nodes(question, documents_with_trees)
+    if not selected_nodes:
+        logger.info("Stage 5 found no nodes — trying top-nodes fallback")
+        selected_nodes = _get_top_nodes_fallback(documents_with_trees, n=3)
+
     if not selected_nodes:
         return ("No relevant PageIndex nodes found in the BIS documents.", [])
 
@@ -561,6 +576,200 @@ def _run_pipeline(question: str):
 
     logger.info("Pipeline complete — %d sections retrieved", len(page_contents))
     return tool_result, page_contents
+
+
+# ============================================================
+# METADATA-BASED FALLBACK ANSWER
+# ============================================================
+
+def _metadata_fallback_answer(question: str) -> tuple:
+    """
+    When the 7-stage PageIndex pipeline finds no relevant nodes,
+    fall back to searching the products/categories/documents collections
+    directly by name / text match.
+
+    Returns (tool_result_text, page_contents_list).
+    If nothing found, returns ("", []).
+    """
+    logger.info("Vectorless — attempting metadata fallback for: %r", question)
+
+    q_lower = question.lower()
+    # Build a set of meaningful query words (min 3 chars, skip stop words)
+    stop_words = {
+        "what", "give", "tell", "the", "for", "are", "is", "of", "a", "an",
+        "to", "in", "on", "and", "or", "with", "from", "by", "as", "at",
+        "be", "was", "were", "it", "this", "that", "can", "does", "do",
+        "about", "brief", "please", "how", "which", "who", "where", "when",
+        "why", "you", "me", "us", "we", "he", "she", "they", "requirements",
+        "requirement", "required", "standard", "standards",
+    }
+    query_words = [
+        w for w in re.findall(r"\b[a-zA-Z]{3,}\b", q_lower)
+        if w not in stop_words
+    ]
+
+    if not query_words:
+        return "", []
+
+    # Step 1 — Try to find relevant products by name
+    pattern = "|".join(re.escape(w) for w in query_words)
+    matched_products = list(
+        db.products.find(
+            {"product_name": {"$regex": pattern, "$options": "i"}},
+            {"_id": 1, "product_name": 1, "category_name": 1, "documents": 1},
+            limit=5,
+        )
+    )
+
+    # Step 2 — Try categories if no products found
+    if not matched_products:
+        matched_cats = list(
+            db.categories.find(
+                {"name": {"$regex": pattern, "$options": "i"}},
+                {"_id": 1, "name": 1},
+                limit=3,
+            )
+        )
+        if matched_cats:
+            cat_ids = [c["_id"] for c in matched_cats]
+            matched_products = list(
+                db.products.find(
+                    {"category_id": {"$in": cat_ids}},
+                    {"_id": 1, "product_name": 1, "category_name": 1, "documents": 1},
+                    limit=5,
+                )
+            )
+
+    # Step 3 — Try direct document search by filename / product_name
+    if not matched_products:
+        matched_docs = list(
+            db.documents.find(
+                {
+                    "$or": [
+                        {"filename": {"$regex": pattern, "$options": "i"}},
+                        {"product_name": {"$regex": pattern, "$options": "i"}},
+                        {"category_name": {"$regex": pattern, "$options": "i"}},
+                    ]
+                },
+                {"_id": 1, "filename": 1, "product_name": 1, "category_name": 1, "tree_id": 1},
+                limit=5,
+            )
+        )
+        if matched_docs:
+            # Synthesise fake product-like dicts so Stage 3–6 can run on them
+            matched_products = [
+                {
+                    "_id": d.get("product_name", d["_id"]),
+                    "product_name": d.get("product_name", ""),
+                    "category_name": d.get("category_name", ""),
+                    "documents": [{"document_id": d["_id"], "filename": d["filename"], "summary": ""}],
+                }
+                for d in matched_docs
+            ]
+
+    if not matched_products:
+        logger.warning("Metadata fallback: no products or documents matched the query.")
+        return "", []
+
+    logger.info("Metadata fallback: found %d product(s)", len(matched_products))
+
+    # Run Stages 3–6 on the matched products
+    selected_documents = retrieve_documents(matched_products)
+    if not selected_documents:
+        return "", []
+
+    documents_with_trees = get_document_trees(selected_documents)
+    if not documents_with_trees:
+        return "", []
+
+    selected_nodes = retrieve_pageindex_nodes(question, documents_with_trees)
+    if not selected_nodes:
+        # Last resort: grab the very first node from the first tree
+        selected_nodes = _get_top_nodes_fallback(documents_with_trees, n=3)
+
+    if not selected_nodes:
+        return "", []
+
+    page_contents = get_selected_page_content(selected_nodes)
+    if not page_contents:
+        return "", []
+
+    context_parts = []
+    remaining_chars = FINAL_CONTEXT_MAX_CHARS
+    for index, content in enumerate(page_contents, start=1):
+        if remaining_chars <= 0:
+            break
+        text = truncate_to_token_budget(
+            content.get("text", "") or "",
+            MAX_FINAL_CHARS_PER_NODE // CHARS_PER_TOKEN,
+        )
+        block = (
+            f"SOURCE {index}\n\n"
+            f"DOCUMENT: {content['filename']}\n"
+            f"DOCUMENT ID: {content['document_id']}\n"
+            f"NODE ID: {content['node_id']}\n"
+            f"PAGE RANGE: {content['start_index']} - {content['end_index']}\n\n"
+            f"CONTENT:\n{text}\n"
+        )
+        if len(block) > remaining_chars:
+            block = block[: max(0, remaining_chars - 200)] + "\n...[context budget reached]"
+        context_parts.append(block)
+        remaining_chars -= len(block)
+
+    tool_result = (
+        f"[Metadata fallback] Retrieved {len(page_contents)} section(s) from "
+        f"BIS documents matching the query terms:\n\n"
+        + "\n\n".join(context_parts)
+    )
+    return tool_result, page_contents
+
+
+def _get_top_nodes_fallback(documents_with_trees: List[Dict], n: int = 3) -> List[Dict]:
+    """
+    Absolute last-resort fallback: return the first N leaf nodes from the
+    trees associated with the selected documents, regardless of relevance score.
+    Used only when the lexical ranking returns nothing.
+    """
+    collected: List[Dict] = []
+
+    for document in documents_with_trees:
+        if len(collected) >= n:
+            break
+        tree_doc = db.pageindex_trees.find_one({"_id": document["tree_id"]})
+        if not tree_doc:
+            continue
+        tree = tree_doc.get("tree")
+        if not tree:
+            continue
+
+        roots = tree if isinstance(tree, list) else [tree]
+
+        def _walk(node):
+            if len(collected) >= n:
+                return
+            if not isinstance(node, dict):
+                return
+            text = node.get("text", "") or ""
+            if text.strip():
+                collected.append({
+                    "document_id": document["document_id"],
+                    "filename": document["filename"],
+                    "node_id": node.get("node_id"),
+                    "title": node.get("title", ""),
+                    "summary": node.get("summary", ""),
+                    "start_index": node.get("start_index"),
+                    "end_index": node.get("end_index"),
+                    "text": text,
+                    "parent_id": None,
+                })
+            for child in node.get("nodes", []) or []:
+                _walk(child)
+
+        for root in roots:
+            _walk(root)
+
+    logger.info("Top-nodes fallback collected %d nodes", len(collected))
+    return collected
 
 
 def _build_sources_from_contents(page_contents: List[Dict]) -> List[Dict]:
@@ -655,7 +864,7 @@ MAX_SELECTED_PRODUCTS = 5
 MAX_NODE_LLM_CANDIDATES = 10
 NODE_TEXT_PREVIEW_CHARS = 700
 NODES_PER_DOCUMENT_GUARANTEE = 2
-MIN_FALLBACK_SCORE = 3
+MIN_FALLBACK_SCORE = 0          # Accept ANY node rather than returning empty
 MAX_SELECTED_NODES = 5
 
 FINAL_CONTEXT_MAX_TOKENS = 5200
@@ -747,6 +956,17 @@ def expand_query_terms(question: str):
         "guard": {"guard", "guards", "guarding"},
         "test": {"test", "testing", "tested"},
         "performance": {"performance"},
+        # Agricultural / tractor terms
+        "tractor": {"tractor", "tractors", "agricultural", "farm", "power"},
+        "agricultural": {"agricultural", "tractor", "farm", "agri"},
+        "cement": {"cement", "concrete", "mortar", "portland", "opc"},
+        "portland": {"portland", "cement", "opc", "clinker"},
+        "mixer": {"mixer", "grinder", "blender", "kitchen"},
+        "sprayer": {"sprayer", "spray", "nozzle", "pesticide"},
+        "helmet": {"helmet", "headgear", "protective"},
+        "pipe": {"pipe", "pipes", "hdpe", "polyethylene"},
+        "brief": {"brief", "overview", "introduction", "about"},
+        "certification": {"certification", "certificate", "certified", "crs", "bis"},
     }
     normalized_question = normalize_text(question)
     for variant in ["load-bearing", "load bearing"]:

@@ -5,14 +5,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from rag import ask_rag
+from rag import ask_rag, stream_agentic_rag
 from vectorless_rag_api import ask_vectorless_rag
 
 
-app = FastAPI(title="BIS RAG API (Agentic + Vectorless)")
+app = FastAPI(title="BIS RAG API (Agentic Hybrid + Vectorless)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,24 +37,46 @@ def home():
         "message": "BIS RAG API is running",
         "endpoints": {
             "vector_rag": "POST /ask",
+            "vector_rag_stream": "POST /ask/stream",
             "vectorless_rag": "POST /ask-vectorless",
         },
     }
 
 
 # ──────────────────────────────────────────────────────────────
-# VECTOR RAG (Agentic — Qdrant + BGE-M3 + payload filtering)
-# ask_rag always returns a valid dict (never None)
+# VECTOR RAG (Hybrid — Qdrant + BGE-M3 + RRF + Validation)
 # ──────────────────────────────────────────────────────────────
 
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
-    return ask_rag(request.question)
+    return ask_rag(
+        question=request.question,
+        context=request.context,
+        entities=request.entities,
+        intent=request.intent,
+    )
+
+
+@app.post("/ask/stream")
+def ask_question_stream(request: QuestionRequest):
+    return StreamingResponse(
+        stream_agentic_rag(
+            question=request.question,
+            context=request.context,
+            entities=request.entities,
+            intent=request.intent,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ──────────────────────────────────────────────────────────────
 # VECTORLESS RAG (Agentic — MongoDB PageIndex, no embeddings)
-# ask_vectorless_rag always returns a valid dict (never None)
 # ──────────────────────────────────────────────────────────────
 
 @app.post("/ask-vectorless")

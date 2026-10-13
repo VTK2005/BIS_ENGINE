@@ -41,10 +41,9 @@ from groq import Groq
 # CONFIGURATION
 # ============================================================
 
-# Put your NEW/ROTATED credentials here if you intentionally want
-# credentials embedded in this single file.
-GROQ_API_KEY = "PASTE_YOUR_NEW_GROQ_API_KEY_HERE"
-MONGO_URI = "PASTE_YOUR_MONGODB_URI_HERE"
+# Reads from environment or fallback to embedded credentials
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or "PASTE_YOUR_NEW_GROQ_API_KEY_HERE"
+MONGO_URI = os.getenv("MONGO_URI") or "PASTE_YOUR_MONGODB_URI_HERE"
 
 DATABASE_NAME = "vectorless_rag"
 
@@ -63,8 +62,14 @@ PAGEINDEX_API_KEY = None
 # ============================================================
 
 if not MONGO_URI or MONGO_URI.startswith("PASTE_"):
+    from dotenv import load_dotenv
+    load_dotenv()
+    MONGO_URI = os.getenv("MONGO_URI")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not MONGO_URI or MONGO_URI.startswith("PASTE_"):
     raise ValueError(
-        "Set MONGO_URI at the top of this file before running."
+        "Set MONGO_URI at the top of this file or in .env before running."
     )
 
 client = MongoClient(MONGO_URI)
