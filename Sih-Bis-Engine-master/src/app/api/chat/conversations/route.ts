@@ -19,7 +19,10 @@ export async function GET(req: NextRequest) {
         await connectDB();
 
         // Enforce user isolation: only fetch conversations belonging to this user
-        const conversations = await Conversation.find({ userId: authUser.id })
+        const conversations = await Conversation.find({
+            userId: authUser.id,
+            "messages.0": { $exists: true },
+        })
             .sort({ updatedAt: -1 })
             .select("_id title updatedAt createdAt messages")
             .lean();

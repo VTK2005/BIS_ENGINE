@@ -48,3 +48,65 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #374151;
 }
+
+/* Markdown responses */
+.response-markdown {
+  overflow-wrap: anywhere;
+}
+
+.response-markdown > :first-child {
+  margin-top: 0;
+}
+
+.response-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.response-markdown ul ul,
+.response-markdown ul ol,
+.response-markdown ol ul,
+.response-markdown ol ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+}
+
+.response-markdown pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.response-markdown pre code {
+  display: block;
+  overflow-wrap: normal;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.response-markdown-table {
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
+.response-markdown-table table {
+  min-width: 44rem;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.response-markdown-table th,
+.response-markdown-table td {
+  border-right: 1px solid #dbe5ee;
+  border-bottom: 1px solid #dbe5ee;
+}
+
+.response-markdown-table th:last-child,
+.response-markdown-table td:last-child {
+  border-right: 0;
+}
+
+.response-markdown-table tbody tr:last-child td {
+  border-bottom: 0;
+}

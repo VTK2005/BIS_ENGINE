@@ -80,6 +80,8 @@ const Page = () => {
     const initialQueryHandled = useRef(false);
     const abortControllerRef = useRef<AbortController | null>(null);
     const conversationCreatingRef = useRef(false); // guard: prevent double-creation
+    const submitInFlightRef = useRef(false);
+    const conversationIdRef = useRef<string | null>(null);
 
     // User & Authentication state
     const [user, setUser] = useState<UserProfile | null>(null);
@@ -89,7 +91,8 @@ const Page = () => {
     const [responses, setResponses] = useState<StoredResponse[]>([]);
     const [loading, setLoading] = useState(false);
     const [conversationId, setConversationId] = useState<string | null>(null);
-    const [conversationLoading, setConversationLoading] = useState(true);
+    const [conversationLoading, setConversationLoading] = useState(false);
+    const [conversationError, setConversationError] = useState<string | null>(null);
     const [ragMode, setRagMode] = useState<RagMode>("vector");
 
     // Sidebar conversation history state
@@ -152,47 +155,53 @@ const Page = () => {
     }, [user, loadConversations]);
 
     // ──────────────────────────────────────────────────────────
-    // 3. Initialize or Create Conversation
+    // 3. Keep a local draft until the first valid question is submitted
     // ──────────────────────────────────────────────────────────
     const createNewConversation = useCallback(async () => {
-        if (conversationCreatingRef.current) return;  // already in-flight
+        if (loading || conversationLoading || conversationCreatingRef.current) return;
+        conversationIdRef.current = null;
+        setConversationId(null);
+        setResponses([]);
+        setConversationError(null);
+        reset();
+    }, [conversationLoading, loading, reset]);
+
+    const persistConversation = useCallback(async () => {
+        if (conversationIdRef.current) return conversationIdRef.current;
         conversationCreatingRef.current = true;
+        setConversationLoading(true);
+        setConversationError(null);
         try {
-            setConversationLoading(true);
             const response = await fetch("/api/chat/conversations", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ title: "New Chat" }),
             });
-
             const data = await response.json();
-            if (!response.ok || !data.success) {
+            if (!response.ok || !data.success || !data.conversationId) {
                 throw new Error(data.message || "Failed to create conversation");
             }
-
+            conversationIdRef.current = data.conversationId;
             setConversationId(data.conversationId);
             setResponses([]);
-            reset();
             loadConversations();
+            return data.conversationId as string;
         } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to create conversation";
+            setConversationError(message);
             console.error("Conversation creation failed:", error);
+            throw error;
         } finally {
             conversationCreatingRef.current = false;
             setConversationLoading(false);
         }
-    }, [loadConversations, reset]);
-
-    useEffect(() => {
-        if (user && !conversationId && !conversationCreatingRef.current) {
-            createNewConversation();
-        }
-    }, [user, conversationId, createNewConversation]);
+    }, [loadConversations]);
 
     // ──────────────────────────────────────────────────────────
     // 4. Handle URL Query Param
     // ──────────────────────────────────────────────────────────
     useEffect(() => {
-        if (!initialQuery || initialQueryHandled.current || !conversationId || conversationLoading)
+        if (!user || !initialQuery || initialQueryHandled.current || conversationLoading)
             return;
         const query = initialQuery.trim();
         if (!query) return;
@@ -202,17 +211,18 @@ const Page = () => {
         handleSubmit(onSubmit)();
 
         window.history.replaceState(null, "", "/assistant");
-    }, [initialQuery, conversationId, conversationLoading, handleSubmit, setValue]);
+    }, [initialQuery, conversationId, conversationLoading, handleSubmit, setValue, user]);
 
     // ──────────────────────────────────────────────────────────
     // 5. Select & Load a Conversation from Sidebar
     // ──────────────────────────────────────────────────────────
     const handleSelectConversation = async (id: string) => {
-        if (id === conversationId || loading) return;
+        if (id === conversationId || loading || conversationLoading || conversationCreatingRef.current) return;
 
         try {
             setConversationLoading(true);
             setConversationId(id);
+            conversationIdRef.current = id;
             setResponses([]);
 
             const res = await fetch(`/api/chat/conversations/${id}`);
@@ -245,6 +255,8 @@ const Page = () => {
                 }
 
                 setResponses(rebuiltResponses);
+                reset();
+                setConversationError(null);
             }
         } catch (err) {
             console.error("Error switching conversation:", err);
@@ -290,6 +302,7 @@ const Page = () => {
     // ──────────────────────────────────────────────────────────
     const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
+        if (loading || conversationLoading || conversationCreatingRef.current) return;
         if (!confirm("Are you sure you want to delete this conversation?")) return;
 
         try {
@@ -300,7 +313,11 @@ const Page = () => {
             if (res.ok) {
                 setConversations((prev) => prev.filter((c) => c.id !== id));
                 if (conversationId === id) {
-                    createNewConversation();
+                    conversationIdRef.current = null;
+                    setConversationId(null);
+                    setResponses([]);
+                    setConversationError(null);
+                    reset();
                 }
             }
         } catch (err) {
@@ -340,12 +357,12 @@ const Page = () => {
             );
 
             // Persist the stopped response in the database
-            if (conversationId) {
+            if (conversationIdRef.current) {
                 fetch("/api/chat/stop", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        conversationId,
+                        conversationId: conversationIdRef.current,
                         partialAnswer: partialText,
                         sources: activeResp.sources || [],
                     }),
@@ -355,40 +372,20 @@ const Page = () => {
     };
 
     // ──────────────────────────────────────────────────────────
-    // 9. Typewriter Simulation
-    // ──────────────────────────────────────────────────────────
-    const typeText = (
-        text: string,
-        callback: (value: string) => void,
-        signal?: AbortSignal,
-        speed = 10
-    ) => {
-        return new Promise<void>((resolve) => {
-            let index = 0;
-            const interval = setInterval(() => {
-                if (signal?.aborted) {
-                    clearInterval(interval);
-                    resolve();
-                    return;
-                }
-                index++;
-                callback(text.slice(0, index));
-                if (index >= text.length) {
-                    clearInterval(interval);
-                    resolve();
-                }
-            }, speed);
-        });
-    };
-
-    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-    // ──────────────────────────────────────────────────────────
-    // 10. Submit Query Handler
+    // 9. Submit Query Handler
     // ──────────────────────────────────────────────────────────
     const onSubmit: SubmitHandler<Inputs> = async (data) => {
         const userQuery = data.search_query.trim();
-        if (!userQuery || loading || conversationLoading || !conversationId) return;
+        if (!userQuery || loading || conversationLoading || submitInFlightRef.current) return;
+        submitInFlightRef.current = true;
+
+        let activeConversationId: string;
+        try {
+            activeConversationId = await persistConversation();
+        } catch {
+            submitInFlightRef.current = false;
+            return;
+        }
 
         const messageId = crypto.randomUUID();
         const controller = new AbortController();
@@ -419,7 +416,7 @@ const Page = () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    conversationId,
+                    conversationId: activeConversationId,
                     search_query: userQuery,
                     mode: ragMode,
                 }),
@@ -433,29 +430,15 @@ const Page = () => {
             const resp: ChatResponse = await searchReq.json();
             if (controller.signal.aborted) return;
 
-            await delay(300);
-
-            await typeText(
-                resp.answer,
-                (partial) => {
-                    setResponses((prev) =>
-                        prev.map((msg) =>
-                            msg.id === messageId ? { ...msg, answer: partial } : msg
-                        )
-                    );
-                },
-                controller.signal,
-                8
-            );
-
-            if (controller.signal.aborted) return;
-
-            await delay(200);
-
             setResponses((prev) =>
                 prev.map((msg) =>
                     msg.id === messageId
-                        ? { ...msg, sources: resp.sources ?? [], status: "complete" }
+                        ? {
+                              ...msg,
+                              answer: resp.answer,
+                              sources: resp.sources ?? [],
+                              status: "complete",
+                          }
                         : msg
                 )
             );
@@ -485,6 +468,7 @@ const Page = () => {
         } finally {
             setLoading(false);
             abortControllerRef.current = null;
+            submitInFlightRef.current = false;
         }
     };
 
@@ -754,6 +738,11 @@ const Page = () => {
                         </div>
 
                         {/* INPUT BOX & STOP BUTTON */}
+                        {conversationError && (
+                            <div className="mx-auto mb-2 max-w-5xl text-xs text-red-600">
+                                {conversationError} Please submit again to retry.
+                            </div>
+                        )}
                         <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-xl border border-[#17395f]/15 bg-white p-2 shadow-[0_5px_25px_rgba(23,57,95,0.08)]">
                             <Search size={20} className="ml-2 shrink-0 text-[#69839c]" />
 
@@ -789,7 +778,7 @@ const Page = () => {
                                 {/* SUBMIT BUTTON */}
                                 <button
                                     type="submit"
-                                    disabled={loading || conversationLoading || !conversationId}
+                                    disabled={loading || conversationLoading}
                                     className="h-10 rounded-lg bg-[#0f4c81] px-6 text-sm font-semibold text-white transition hover:bg-[#0b3e6a] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {loading ? (
@@ -829,11 +818,11 @@ const Page = () => {
                                     key={query}
                                     type="button"
                                     onClick={() => {
-                                        if (loading || conversationLoading || !conversationId) return;
+                                        if (loading || conversationLoading) return;
                                         setValue("search_query", query);
                                         setTimeout(() => handleSubmit(onSubmit)(), 50);
                                     }}
-                                    disabled={loading || conversationLoading || !conversationId}
+                                    disabled={loading || conversationLoading}
                                     className="group flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-xs text-[#465f78] transition hover:bg-[#f4f8fc] disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <span>{query}</span>

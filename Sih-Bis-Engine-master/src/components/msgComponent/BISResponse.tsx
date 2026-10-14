@@ -34,7 +34,7 @@ const BISResponse = ({
             {/* ANSWER CARD */}
             <div className="flex flex-col gap-5 rounded-xl bg-[#edf5fb]/65 px-4 py-4">
                 {/* ANSWER */}
-                <div className="text-[15px] leading-7 text-[#334e68]">
+                <div className="response-markdown text-[15px] leading-7 text-[#334e68]">
                     <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -57,7 +57,7 @@ const BISResponse = ({
                             ),
 
                             li: ({ children }) => (
-                                <li className="leading-7">
+                                <li className="leading-7 marker:text-[#7890a6]">
                                     {children}
                                 </li>
                             ),
@@ -98,15 +98,21 @@ const BISResponse = ({
                                 </blockquote>
                             ),
 
-                            code: ({ children }) => (
-                                <code className="rounded-md bg-[#e3edf6] px-1.5 py-0.5 text-[13px] font-medium text-[#174d7b]">
+                            pre: ({ children }) => (
+                                <pre className="my-4 overflow-x-auto rounded-lg bg-[#17395f] p-4 text-[13px] leading-6 text-[#edf5fb] shadow-inner">
+                                    {children}
+                                </pre>
+                            ),
+
+                            code: ({ children, className }) => (
+                                <code className={`${className ?? ""} rounded-md bg-[#e3edf6] px-1.5 py-0.5 text-[13px] font-medium text-[#174d7b]`}>
                                     {children}
                                 </code>
                             ),
 
                             table: ({ children }) => (
-                                <div className="my-5 w-full overflow-x-auto rounded-xl border border-[#17395f]/10 bg-white shadow-[0_3px_14px_rgba(23,57,95,0.04)]">
-                                    <table className="w-full min-w-155 border-collapse text-left text-[13px]">
+                                <div className="response-markdown-table my-5 w-full overflow-x-auto rounded-xl border border-[#17395f]/10 bg-white shadow-[0_3px_14px_rgba(23,57,95,0.04)]">
+                                    <table className="text-left text-[13px]">
                                         {children}
                                     </table>
                                 </div>
