@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from "lucide-react";
+import { apiFetch, apiUrl, getTokenFromResponse, readJson, setAccessToken } from "@/lib/apiClient";
 
 declare global {
     interface Window {
@@ -44,7 +45,8 @@ export default function LoginPage() {
             return;
         }
 
-        const redirectUri = `${window.location.origin}/api/auth/callback/google`;
+        const redirectUri =
+            process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI || apiUrl("auth/callback/google");
         const scope = "email profile openid";
         // Pass the desired redirect as 'state' so the callback can redirect there after login
         const state = encodeURIComponent(redirectUrl);
@@ -63,17 +65,20 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            const res = await fetch("/api/auth/login", {
+            const res = await apiFetch("/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),
             });
 
-            const data = await res.json();
+            const data = await readJson<{ message?: string } & Record<string, unknown>>(res);
 
             if (!res.ok) {
-                throw new Error(data.message || "Invalid credentials");
+                throw new Error(data?.message || "Invalid credentials");
             }
+
+            const token = getTokenFromResponse(data);
+            if (token) setAccessToken(token);
 
             router.push(redirectUrl);
             router.refresh();

@@ -31,6 +31,7 @@ import { useForm, SubmitHandler } from "react-hook-form";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { apiFetch, clearAccessToken, readJson } from "@/lib/apiClient";
 
 type Inputs = {
     search_query: string;
@@ -107,10 +108,10 @@ const Page = () => {
     useEffect(() => {
         const verifyAuth = async () => {
             try {
-                const res = await fetch("/api/auth/me");
+                const res = await apiFetch("/auth/me");
                 if (res.ok) {
-                    const data = await res.json();
-                    if (data.authenticated && data.user) {
+                    const data = await readJson<{ authenticated?: boolean; user?: UserProfile }>(res);
+                    if (data?.authenticated && data.user) {
                         setUser(data.user);
                     } else {
                         router.push("/login?redirect=/assistant");
@@ -134,10 +135,10 @@ const Page = () => {
     const loadConversations = useCallback(async () => {
         try {
             setLoadingConversations(true);
-            const res = await fetch("/api/chat/conversations");
+            const res = await apiFetch("/chat/conversations");
             if (res.ok) {
-                const data = await res.json();
-                if (data.success && Array.isArray(data.conversations)) {
+                const data = await readJson<{ success?: boolean; conversations?: ConversationItem[] }>(res);
+                if (data?.success && Array.isArray(data.conversations)) {
                     setConversations(data.conversations);
                 }
             }
@@ -172,14 +173,14 @@ const Page = () => {
         setConversationLoading(true);
         setConversationError(null);
         try {
-            const response = await fetch("/api/chat/conversations", {
+            const response = await apiFetch("/chat/conversations", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ title: "New Chat" }),
             });
-            const data = await response.json();
-            if (!response.ok || !data.success || !data.conversationId) {
-                throw new Error(data.message || "Failed to create conversation");
+            const data = await readJson<{ success?: boolean; conversationId?: string; message?: string }>(response);
+            if (!response.ok || !data?.success || !data.conversationId) {
+                throw new Error(data?.message || "Failed to create conversation");
             }
             conversationIdRef.current = data.conversationId;
             setConversationId(data.conversationId);
@@ -225,13 +226,13 @@ const Page = () => {
             conversationIdRef.current = id;
             setResponses([]);
 
-            const res = await fetch(`/api/chat/conversations/${id}`);
+            const res = await apiFetch(`/chat/conversations/${id}`);
             if (!res.ok) {
                 throw new Error("Failed to load conversation messages");
             }
 
-            const data = await res.json();
-            if (data.success && data.conversation?.messages) {
+            const data = await readJson<{ success?: boolean; conversation?: { messages?: Array<{ role: string; content: string; _id?: string; createdAt?: string; sources?: Source[]; stopped?: boolean }> } }>(res);
+            if (data?.success && data.conversation?.messages) {
                 const msgs = data.conversation.messages;
                 const rebuiltResponses: StoredResponse[] = [];
 
@@ -279,7 +280,7 @@ const Page = () => {
         if (!editTitleValue.trim()) return;
 
         try {
-            const res = await fetch(`/api/chat/conversations/${id}`, {
+            const res = await apiFetch(`/chat/conversations/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ title: editTitleValue.trim() }),
@@ -306,7 +307,7 @@ const Page = () => {
         if (!confirm("Are you sure you want to delete this conversation?")) return;
 
         try {
-            const res = await fetch(`/api/chat/conversations/${id}`, {
+            const res = await apiFetch(`/chat/conversations/${id}`, {
                 method: "DELETE",
             });
 
@@ -358,7 +359,7 @@ const Page = () => {
 
             // Persist the stopped response in the database
             if (conversationIdRef.current) {
-                fetch("/api/chat/stop", {
+                apiFetch("/chat/stop", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -412,7 +413,7 @@ const Page = () => {
         setLoading(true);
 
         try {
-            const searchReq = await fetch("/api/chat", {
+            const searchReq = await apiFetch("/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -427,7 +428,8 @@ const Page = () => {
                 throw new Error(`Request failed with status ${searchReq.status}`);
             }
 
-            const resp: ChatResponse = await searchReq.json();
+            const resp = await readJson<ChatResponse>(searchReq);
+            if (!resp) throw new Error("Invalid response from chat service");
             if (controller.signal.aborted) return;
 
             setResponses((prev) =>
@@ -648,7 +650,8 @@ const Page = () => {
                                 </div>
                                 <button
                                     onClick={async () => {
-                                        await fetch("/api/auth/logout", { method: "POST" });
+                                        await apiFetch("/auth/logout", { method: "POST" });
+                                        clearAccessToken();
                                         router.push("/login");
                                     }}
                                     title="Sign out"

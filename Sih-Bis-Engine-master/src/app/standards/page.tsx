@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Search, ArrowRight, FileText, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+import { apiFetch, readJson } from "@/lib/apiClient";
 
 interface Standard {
     id?: string;
@@ -29,14 +30,14 @@ export default function StandardsPage() {
         setSearched(true);
 
         try {
-            const response = await fetch(`/api/standards/search?q=${encodeURIComponent(searchTerm)}`);
+            const response = await apiFetch(`/standards/search?q=${encodeURIComponent(searchTerm)}`);
 
             if (!response.ok) {
                 throw new Error("Failed to search standards");
             }
 
-            const data = await response.json();
-            setResults(data.results ?? []);
+            const data = await readJson<{ results?: Standard[] }>(response);
+            setResults(data?.results ?? []);
         } catch (error) {
             console.error(error);
             setResults([]);

@@ -4,3 +4,8 @@ python-dotenv
 openai
 sentence-transformers
 qdrant-client
+pymongo
+PyJWT
+bcrypt
+httpx
+beautifulsoup4

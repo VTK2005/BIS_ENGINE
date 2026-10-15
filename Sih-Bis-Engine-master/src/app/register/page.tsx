@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail, User as UserIcon, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from "lucide-react";
+import { apiFetch, getTokenFromResponse, readJson, setAccessToken } from "@/lib/apiClient";
 
 export default function RegisterPage() {
     const router = useRouter();
@@ -28,17 +29,20 @@ export default function RegisterPage() {
         setLoading(true);
 
         try {
-            const res = await fetch("/api/auth/register", {
+            const res = await apiFetch("/auth/register", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name, email, password }),
             });
 
-            const data = await res.json();
+            const data = await readJson<{ message?: string } & Record<string, unknown>>(res);
 
             if (!res.ok) {
-                throw new Error(data.message || "Registration failed");
+                throw new Error(data?.message || "Registration failed");
             }
+
+            const token = getTokenFromResponse(data);
+            if (token) setAccessToken(token);
 
             router.push(redirectUrl);
             router.refresh();

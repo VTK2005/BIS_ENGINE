@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bell, ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
+import { apiFetch, readJson } from "@/lib/apiClient";
 
 interface BisUpdate {
     _id: string;
@@ -43,14 +44,14 @@ const HomeInfoCards = () => {
     useEffect(() => {
         async function fetchUpdates() {
             try {
-                const response = await fetch("/api/updates");
+                const response = await apiFetch("/updates");
 
                 if (!response.ok) {
                     throw new Error("Failed to fetch updates");
                 }
 
-                const data = await response.json();
-                setUpdates(data.updates ?? []);
+                const data = await readJson<{ updates?: BisUpdate[] }>(response);
+                setUpdates(data?.updates ?? []);
             } catch (error) {
                 console.error("Failed to load updates:", error);
             } finally {

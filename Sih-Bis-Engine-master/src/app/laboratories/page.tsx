@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 
 import { ArrowUpRight, Building2, FlaskConical, Loader2, Mail, MapPin, Phone, Search } from "lucide-react";
+import { apiFetch, readJson } from "@/lib/apiClient";
 
 interface Laboratory {
     id: string;
@@ -61,11 +62,11 @@ export default function LaboratoriesPage() {
             setError("");
             setSearched(true);
 
-            const response = await fetch(`/api/laboratories/search?${params.toString()}`);
-            const data: ApiResponse = await response.json();
+            const response = await apiFetch(`/laboratories/search?${params.toString()}`);
+            const data = await readJson<ApiResponse>(response);
 
-            if (!response.ok || !data.success) {
-                throw new Error(data.message || "Unable to fetch laboratory data.");
+            if (!response.ok || !data?.success) {
+                throw new Error(data?.message || "Unable to fetch laboratory data.");
             }
 
             setResults(data.results || []);

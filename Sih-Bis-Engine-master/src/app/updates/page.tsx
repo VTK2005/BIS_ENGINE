@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowUpRight, Bell, CalendarDays, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { apiFetch, readJson } from "@/lib/apiClient";
 
 interface BisUpdate {
     _id?: string;
@@ -33,11 +34,11 @@ export default function UpdatesPage() {
             setLoading(true);
             setError("");
 
-            const response = await fetch("/api/updates", { cache: "no-store" });
-            const data: UpdatesResponse = await response.json();
+            const response = await apiFetch("/updates", { cache: "no-store" });
+            const data = await readJson<UpdatesResponse>(response);
 
-            if (!response.ok || !data.success) {
-                throw new Error(data.error || "Failed to fetch updates.");
+            if (!response.ok || !data?.success) {
+                throw new Error(data?.error || "Failed to fetch updates.");
             }
 
             setUpdates(data.updates || []);

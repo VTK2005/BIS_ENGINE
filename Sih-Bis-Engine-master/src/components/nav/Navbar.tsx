@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { LogOut, LogIn } from "lucide-react";
 import BisLogo from "@/components/nav/NavLogo";
+import { apiFetch, clearAccessToken, readJson } from "@/lib/apiClient";
 
 const navLinks = [
     { name: "Home", href: "/" },
@@ -31,10 +32,10 @@ const Navbar = () => {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const res = await fetch("/api/auth/me");
+                const res = await apiFetch("/auth/me");
                 if (res.ok) {
-                    const data = await res.json();
-                    if (data.authenticated && data.user) {
+                    const data = await readJson<{ authenticated?: boolean; user?: UserProfile }>(res);
+                    if (data?.authenticated && data.user) {
                         setUser(data.user);
                     } else {
                         setUser(null);
@@ -52,7 +53,8 @@ const Navbar = () => {
 
     const handleLogout = async () => {
         try {
-            await fetch("/api/auth/logout", { method: "POST" });
+            await apiFetch("/auth/logout", { method: "POST" });
+            clearAccessToken();
             setUser(null);
             router.push("/");
             router.refresh();
